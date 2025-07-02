@@ -10,15 +10,17 @@ struct ContentView: View {
     private let svgGenerator = SVGGenerator()
 
     var body: some View {
-        VStack(spacing: 20) {
+        VStack(spacing: 25) {
             Text("Screenshot to Figma")
-                .font(.largeTitle)
-                .fontWeight(.bold)
-                .foregroundColor(Color.primary)
+                .font(.system(.largeTitle, design: .rounded))
+                .fontWeight(.heavy)
+                .foregroundColor(.primary)
 
-            Text("Drag and drop a screenshot to get started")
-                .font(.title2)
-                .foregroundColor(Color.secondary)
+            Text("Drag and drop a screenshot or click to select")
+                .font(.system(.title2, design: .rounded))
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal)
 
             if userImage == nil {
                 DropView(userImage: $userImage, isDragOver: $isDragOver)
@@ -29,20 +31,22 @@ struct ContentView: View {
             if isLoading {
                 ProgressView()
                     .progressViewStyle(CircularProgressViewStyle())
-                    .scaleEffect(1.5)
+                    .scaleEffect(1.2)
+                    .padding(.vertical)
             } else {
                 ConvertButton(userImage: $userImage, isLoading: $isLoading, feedbackText: $feedbackText)
             }
 
             Text(feedbackText)
-                .font(.title3)
-                .foregroundColor(Color.secondary)
+                .font(.system(.body, design: .rounded))
+                .foregroundColor(.secondary)
+                .animation(.easeInOut, value: feedbackText)
         }
-        .padding(30)
-        .background(Color(NSColor.windowBackgroundColor))
-        .cornerRadius(20)
-        .shadow(radius: 10)
-        .onDrop(of: ["public.file-url"], isTargeted: $isDragOver) { providers in
+        .padding(35)
+        .background(Material.ultraThin)
+        .cornerRadius(25)
+        .shadow(color: .black.opacity(0.1), radius: 15, x: 0, y: 10)
+        .onDrop(of: [.fileURL], isTargeted: $isDragOver) { providers in
             handleDrop(providers: providers)
         }
     }
@@ -66,24 +70,46 @@ struct ContentView: View {
 struct DropView: View {
     @Binding var userImage: NSImage?
     @Binding var isDragOver: Bool
+    @State private var showFileImporter = false
 
     var body: some View {
-        VStack {
-            Image(systemName: "photo.on.rectangle.angled")
-                .font(.system(size: 80))
-                .foregroundColor(isDragOver ? .accentColor : .secondary)
-            Text("Drop screenshot here")
-                .font(.title2)
-                .foregroundColor(isDragOver ? .accentColor : .secondary)
-        }
-        .frame(width: 300, height: 200)
-        .background(isDragOver ? Color.accentColor.opacity(0.2) : Color.secondary.opacity(0.1))
-        .cornerRadius(20)
-        .overlay(
+        ZStack {
             RoundedRectangle(cornerRadius: 20)
-                .strokeBorder(style: StrokeStyle(lineWidth: 2, dash: [10]))
-                .foregroundColor(isDragOver ? .accentColor : .secondary)
-        )
+                .fill(isDragOver ? Color.accentColor.opacity(0.15) : Color.clear)
+                .strokeBorder(
+                    isDragOver ? Color.accentColor : Color.secondary.opacity(0.3),
+                    style: StrokeStyle(lineWidth: 2, dash: [8, 4])
+                )
+                .frame(width: 320, height: 220)
+
+            VStack(spacing: 15) {
+                Image(systemName: "plus.rectangle.on.folder.fill")
+                    .font(.system(size: 70))
+                    .foregroundColor(isDragOver ? .accentColor : .secondary.opacity(0.6))
+                Text("Drag & Drop or Click to Select")
+                    .font(.system(.title3, design: .rounded))
+                    .foregroundColor(isDragOver ? .accentColor : .secondary)
+            }
+        }
+        .onTapGesture {
+            showFileImporter = true
+        }
+        .fileImporter(
+            isPresented: $showFileImporter,
+            allowedContentTypes: [.image],
+            allowsMultipleSelection: false
+        ) { result in
+            do {
+                guard let selectedFile: URL = try result.get().first else { return }
+                if let imageData = try? Data(contentsOf: selectedFile) {
+                    DispatchQueue.main.async {
+                        self.userImage = NSImage(data: imageData)
+                    }
+                }
+            } catch {
+                print("Error selecting file: \(error.localizedDescription)")
+            }
+        }
     }
 }
 
@@ -94,9 +120,24 @@ struct ImageView: View {
         Image(nsImage: userImage!)
             .resizable()
             .aspectRatio(contentMode: .fit)
-            .cornerRadius(10)
-            .shadow(radius: 5)
-            .padding()
+            .frame(maxWidth: 400, maxHeight: 300)
+            .cornerRadius(15)
+            .shadow(color: .black.opacity(0.15), radius: 8, x: 0, y: 5)
+            .overlay(
+                Button(action: {
+                    userImage = nil
+                }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.title2)
+                        .foregroundColor(.gray)
+                        .background(Circle().fill(Color.white.opacity(0.7)))
+                        .padding(5)
+                }
+                .buttonStyle(BorderlessButtonStyle())
+                .padding(5),
+                alignment: .topTrailing
+            )
+            .padding(.vertical)
     }
 }
 
@@ -112,7 +153,7 @@ struct ConvertButton: View {
         Button(action: {
             guard let userImage = userImage else { return }
             isLoading = true
-            feedbackText = ""
+            feedbackText = "Analyzing image..."
 
             imageAnalyzer.analyze(image: userImage) { boxes, texts in
                 let svgString = svgGenerator.generate(
@@ -131,17 +172,18 @@ struct ConvertButton: View {
                 }
             }
         }) {
-            Text("Convert to Figma")
-                .font(.title2)
-                .fontWeight(.bold)
-                .foregroundColor(.white)
-                .padding()
+            Label("Convert to Figma", systemImage: "arrow.right.doc.on.clipboard")
+                .font(.system(.title2, design: .rounded))
+                .fontWeight(.semibold)
+                .padding(.vertical, 12)
+                .padding(.horizontal, 25)
                 .frame(maxWidth: .infinity)
-                .background(Color.accentColor)
-                .cornerRadius(10)
-                .shadow(radius: 5)
         }
-        .disabled(userImage == nil)
+        .buttonStyle(.borderedProminent)
+        .controlSize(.large)
+        .tint(.accentColor)
+        .disabled(userImage == nil || isLoading)
+        .shadow(color: .accentColor.opacity(0.3), radius: 10, x: 0, y: 5)
     }
 }
 
