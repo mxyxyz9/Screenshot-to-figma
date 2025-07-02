@@ -11,6 +11,7 @@ struct ContentView: View {
     @State private var userImage: NSImage?
     @State private var showFileImporter = false
     @State private var feedbackText = ""
+    @State private var isLoading = false
 
     private let imageAnalyzer = ImageAnalyzer()
     private let svgGenerator = SVGGenerator()
@@ -31,24 +32,37 @@ struct ContentView: View {
                 showFileImporter = true
             }
             .padding(.bottom)
+            .disabled(isLoading)
 
-            Button("Convert to Figma") {
-                guard let userImage = userImage else { return }
-                imageAnalyzer.analyze(image: userImage) { boxes, texts in
-                    let svgString = svgGenerator.generate(
-                        width: userImage.size.width,
-                        height: userImage.size.height,
-                        boxes: boxes,
-                        texts: texts
-                    )
-                    let pasteboard = NSPasteboard.general
-                    pasteboard.clearContents()
-                    pasteboard.setString(svgString, forType: .string)
-                    feedbackText = "Copied to clipboard!"
+            if isLoading {
+                ProgressView()
+                    .padding(.bottom)
+            } else {
+                Button("Convert to Figma") {
+                    guard let userImage = userImage else { return }
+                    isLoading = true
+                    feedbackText = ""
+
+                    imageAnalyzer.analyze(image: userImage) { boxes, texts in
+                        let svgString = svgGenerator.generate(
+                            width: userImage.size.width,
+                            height: userImage.size.height,
+                            boxes: boxes,
+                            texts: texts
+                        )
+                        let pasteboard = NSPasteboard.general
+                        pasteboard.clearContents()
+                        pasteboard.setString(svgString, forType: .string)
+                        
+                        DispatchQueue.main.async {
+                            feedbackText = "Copied to clipboard!"
+                            isLoading = false
+                        }
+                    }
                 }
+                .padding(.bottom)
+                .disabled(userImage == nil)
             }
-            .padding(.bottom)
-            .disabled(userImage == nil)
 
             Text(feedbackText)
                 .padding()
@@ -63,6 +77,7 @@ struct ContentView: View {
                 guard let selectedFile: URL = try result.get().first else { return }
                 if let imageData = try? Data(contentsOf: selectedFile) {
                     self.userImage = NSImage(data: imageData)
+                    self.feedbackText = ""
                 }
             } catch {
                 // Handle error
