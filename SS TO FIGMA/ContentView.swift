@@ -1,13 +1,14 @@
 import SwiftUI
+import ScreenCaptureKit // Added for ScreenshotManager
 
 struct ContentView: View {
-    @State private var userImage: NSImage?
-    @State private var feedbackText = ""
-    @State private var isLoading = false
-    @State private var isDragOver = false
+    @StateObject private var screenshotManager = ScreenshotManager()
+    @StateObject private var imageAnalyzer = ImageAnalyzer()
+    @StateObject private var uiElementDetector = UIElementDetector()
+    @StateObject private var figmaExporter = FigmaExporter()
 
-    private let imageAnalyzer = ImageAnalyzer()
-    private let svgGenerator = SVGGenerator()
+    @State private var feedbackText = ""
+    @State private var isDragOver = false
 
     var body: some View {
         VStack(spacing: 25) {
@@ -22,19 +23,46 @@ struct ContentView: View {
                 .multilineTextAlignment(.center)
                 .padding(.horizontal)
 
-            if userImage == nil {
-                DropView(userImage: $userImage, isDragOver: $isDragOver)
+            if screenshotManager.capturedImage == nil {
+                DropView(capturedImage: $screenshotManager.capturedImage, isDragOver: $isDragOver)
             } else {
-                ImageView(userImage: $userImage)
+                ImageView(capturedImage: $screenshotManager.capturedImage)
             }
 
-            if isLoading {
+            // New: Capture Screen Button
+            Button(action: {
+                Task {
+                    await screenshotManager.captureScreen()
+                }
+            }) {
+                Label("Capture Screen", systemImage: "macwindow.on.rectangle")
+                    .font(.system(.title2, design: .rounded))
+                    .fontWeight(.semibold)
+                    .padding(.vertical, 12)
+                    .padding(.horizontal, 25)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .tint(.blue) // A different tint for capture
+            .disabled(figmaExporter.exportStatus != .idle) // Disable if exporting
+
+            if figmaExporter.exportStatus != .idle {
                 ProgressView()
                     .progressViewStyle(CircularProgressViewStyle())
                     .scaleEffect(1.2)
                     .padding(.vertical)
+                Text(statusMessage(for: figmaExporter.exportStatus))
+                    .font(.system(.body, design: .rounded))
+                    .foregroundColor(.secondary)
+                    .animation(.easeInOut, value: figmaExporter.exportStatus)
             } else {
-                ConvertButton(userImage: $userImage, isLoading: $isLoading, feedbackText: $feedbackText)
+                ConvertButton(
+                    capturedImage: $screenshotManager.capturedImage,
+                    imageAnalyzer: imageAnalyzer,
+                    uiElementDetector: uiElementDetector,
+                    figmaExporter: figmaExporter
+                )
             }
 
             Text(feedbackText)
@@ -57,7 +85,7 @@ struct ContentView: View {
             if let urlData = urlData as? Data, let url = URL(dataRepresentation: urlData, relativeTo: nil) {
                 if let imageData = try? Data(contentsOf: url) {
                     DispatchQueue.main.async {
-                        self.userImage = NSImage(data: imageData)
+                        self.screenshotManager.capturedImage = NSImage(data: imageData)
                         self.feedbackText = ""
                     }
                 }
@@ -65,19 +93,30 @@ struct ContentView: View {
         }
         return true
     }
+
+    private func statusMessage(for status: FigmaExporter.ExportStatus) -> String {
+        switch status {
+        case .idle: return ""
+        case .analyzing: return "Analyzing image..."
+        case .converting: return "Converting to Figma format..."
+        case .uploading: return "Uploading to Figma..."
+        case .completed: return "Export completed!"
+        case .failed(let error): return "Export failed: \(error)"
+        }
+    }
 }
 
 struct DropView: View {
-    @Binding var userImage: NSImage?
+    @Binding var capturedImage: NSImage?
     @Binding var isDragOver: Bool
     @State private var showFileImporter = false
 
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 20)
-                .fill(isDragOver ? Color.accentColor.opacity(0.15) : Color.clear)
+                .fill(isDragOver ? SwiftUI.Color.accentColor.opacity(0.15) : SwiftUI.Color.clear)
                 .strokeBorder(
-                    isDragOver ? Color.accentColor : Color.secondary.opacity(0.3),
+                    isDragOver ? SwiftUI.Color.accentColor : SwiftUI.Color.secondary.opacity(0.3),
                     style: StrokeStyle(lineWidth: 2, dash: [8, 4])
                 )
                 .frame(width: 320, height: 220)
@@ -85,10 +124,10 @@ struct DropView: View {
             VStack(spacing: 15) {
                 Image(systemName: "plus.rectangle.on.folder.fill")
                     .font(.system(size: 70))
-                    .foregroundColor(isDragOver ? .accentColor : .secondary.opacity(0.6))
+                    .foregroundColor(isDragOver ? SwiftUI.Color.accentColor : SwiftUI.Color.secondary.opacity(0.6))
                 Text("Drag & Drop or Click to Select")
                     .font(.system(.title3, design: .rounded))
-                    .foregroundColor(isDragOver ? .accentColor : .secondary)
+                    .foregroundColor(isDragOver ? SwiftUI.Color.accentColor : SwiftUI.Color.secondary)
             }
         }
         .onTapGesture {
@@ -103,7 +142,7 @@ struct DropView: View {
                 guard let selectedFile: URL = try result.get().first else { return }
                 if let imageData = try? Data(contentsOf: selectedFile) {
                     DispatchQueue.main.async {
-                        self.userImage = NSImage(data: imageData)
+                        self.capturedImage = NSImage(data: imageData)
                     }
                 }
             } catch {
@@ -114,10 +153,10 @@ struct DropView: View {
 }
 
 struct ImageView: View {
-    @Binding var userImage: NSImage?
+    @Binding var capturedImage: NSImage?
 
     var body: some View {
-        Image(nsImage: userImage!)
+        Image(nsImage: capturedImage!)
             .resizable()
             .aspectRatio(contentMode: .fit)
             .frame(maxWidth: 400, maxHeight: 300)
@@ -125,12 +164,12 @@ struct ImageView: View {
             .shadow(color: .black.opacity(0.15), radius: 8, x: 0, y: 5)
             .overlay(
                 Button(action: {
-                    userImage = nil
+                    capturedImage = nil
                 }) {
                     Image(systemName: "xmark.circle.fill")
                         .font(.title2)
                         .foregroundColor(.gray)
-                        .background(Circle().fill(Color.white.opacity(0.7)))
+                        .background(Circle().fill(SwiftUI.Color.white.opacity(0.7)))
                         .padding(5)
                 }
                 .buttonStyle(BorderlessButtonStyle())
@@ -142,34 +181,26 @@ struct ImageView: View {
 }
 
 struct ConvertButton: View {
-    @Binding var userImage: NSImage?
-    @Binding var isLoading: Bool
-    @Binding var feedbackText: String
-
-    private let imageAnalyzer = ImageAnalyzer()
-    private let svgGenerator = SVGGenerator()
+    @Binding var capturedImage: NSImage?
+    @ObservedObject var imageAnalyzer: ImageAnalyzer
+    @ObservedObject var uiElementDetector: UIElementDetector
+    @ObservedObject var figmaExporter: FigmaExporter
 
     var body: some View {
         Button(action: {
-            guard let userImage = userImage else { return }
-            isLoading = true
-            feedbackText = "Analyzing image..."
-
-            imageAnalyzer.analyze(image: userImage) { boxes, texts in
-                let svgString = svgGenerator.generate(
-                    width: userImage.size.width,
-                    height: userImage.size.height,
-                    boxes: boxes,
-                    texts: texts
-                )
-                let pasteboard = NSPasteboard.general
-                pasteboard.clearContents()
-                pasteboard.setString(svgString, forType: .string)
+            guard let image = capturedImage else { return }
+            
+            Task {
+                // Perform analysis and detection first
+                imageAnalyzer.analyzeImage(image)
+                uiElementDetector.detectElements(in: image)
                 
-                DispatchQueue.main.async {
-                    feedbackText = "Copied to clipboard!"
-                    isLoading = false
-                }
+                // Then export to Figma
+                await figmaExporter.exportToFigma(
+                    image: image,
+                    recognizedTexts: imageAnalyzer.recognizedText,
+                    detectedRectangles: imageAnalyzer.detectedRectangles
+                )
             }
         }) {
             Label("Convert to Figma", systemImage: "arrow.right.doc.on.clipboard")
@@ -182,7 +213,7 @@ struct ConvertButton: View {
         .buttonStyle(.borderedProminent)
         .controlSize(.large)
         .tint(.accentColor)
-        .disabled(userImage == nil || isLoading)
+        .disabled(capturedImage == nil || figmaExporter.exportStatus != .idle)
         .shadow(color: .accentColor.opacity(0.3), radius: 10, x: 0, y: 5)
     }
 }

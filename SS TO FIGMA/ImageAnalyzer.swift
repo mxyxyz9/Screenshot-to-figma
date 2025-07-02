@@ -2,46 +2,34 @@
 import Vision
 import AppKit
 
-struct ImageAnalyzer {
-    func analyze(image: NSImage, completion: @escaping ([CGRect], [(String, CGRect)]) -> Void) {
-        guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
-            completion([], [])
-            return
+class ImageAnalyzer: ObservableObject {
+    @Published var recognizedText: [VNRecognizedTextObservation] = []
+    @Published var detectedRectangles: [VNRectangleObservation] = []
+    
+    func analyzeImage(_ image: NSImage) {
+        guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
+        
+        let textRequest = VNRecognizeTextRequest { [weak self] request, error in
+            guard let observations = request.results as? [VNRecognizedTextObservation] else { return }
+            
+            DispatchQueue.main.async {
+                self?.recognizedText = observations
+            }
         }
-
-        let requestHandler = VNImageRequestHandler(cgImage: cgImage, options: [:])
-
-        let rectangleRequest = VNDetectRectanglesRequest { request, error in
+        
+        textRequest.recognitionLevel = .accurate
+        textRequest.recognitionLanguages = ["en-US", "zh-Hans", "zh-Hant"] // Multi-language support
+        
+        let rectangleRequest = VNDetectRectanglesRequest { [weak self] request, error in
             guard let observations = request.results as? [VNRectangleObservation] else {
                 return
             }
-            let boxes = observations.map { $0.boundingBox }
-            
-            let textRequest = VNRecognizeTextRequest { request, error in
-                guard let observations = request.results as? [VNRecognizedTextObservation] else {
-                    completion(boxes, [])
-                    return
-                }
-                let recognizedTexts = observations.compactMap { observation -> (String, CGRect)? in
-                    guard let topCandidate = observation.topCandidates(1).first else { return nil }
-                    return (topCandidate.string, observation.boundingBox)
-                }
-                completion(boxes, recognizedTexts)
-            }
-            
-            do {
-                try requestHandler.perform([textRequest])
-            } catch {
-                print("Error performing text recognition: \(error)")
-                completion(boxes, [])
+            DispatchQueue.main.async {
+                self?.detectedRectangles = observations
             }
         }
-
-        do {
-            try requestHandler.perform([rectangleRequest])
-        } catch {
-            print("Error performing rectangle detection: \(error)")
-            completion([], [])
-        }
+        
+        let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+        try? handler.perform([textRequest, rectangleRequest])
     }
 }
