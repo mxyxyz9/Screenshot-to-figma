@@ -1,89 +1,147 @@
-//
-//  ContentView.swift
-//  SS TO FIGMA
-//
-//  Created by Pala Rushil on 7/2/25.
-//
-
 import SwiftUI
 
 struct ContentView: View {
     @State private var userImage: NSImage?
-    @State private var showFileImporter = false
     @State private var feedbackText = ""
     @State private var isLoading = false
+    @State private var isDragOver = false
 
     private let imageAnalyzer = ImageAnalyzer()
     private let svgGenerator = SVGGenerator()
 
     var body: some View {
-        VStack {
-            if let userImage = userImage {
-                Image(nsImage: userImage)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .padding()
-            } else {
-                Text("Select a screenshot")
-                    .padding()
-            }
+        VStack(spacing: 20) {
+            Text("Screenshot to Figma")
+                .font(.largeTitle)
+                .fontWeight(.bold)
+                .foregroundColor(Color.primary)
 
-            Button("Select Screenshot") {
-                showFileImporter = true
+            Text("Drag and drop a screenshot to get started")
+                .font(.title2)
+                .foregroundColor(Color.secondary)
+
+            if userImage == nil {
+                DropView(userImage: $userImage, isDragOver: $isDragOver)
+            } else {
+                ImageView(userImage: $userImage)
             }
-            .padding(.bottom)
-            .disabled(isLoading)
 
             if isLoading {
                 ProgressView()
-                    .padding(.bottom)
+                    .progressViewStyle(CircularProgressViewStyle())
+                    .scaleEffect(1.5)
             } else {
-                Button("Convert to Figma") {
-                    guard let userImage = userImage else { return }
-                    isLoading = true
-                    feedbackText = ""
-
-                    imageAnalyzer.analyze(image: userImage) { boxes, texts in
-                        let svgString = svgGenerator.generate(
-                            width: userImage.size.width,
-                            height: userImage.size.height,
-                            boxes: boxes,
-                            texts: texts
-                        )
-                        let pasteboard = NSPasteboard.general
-                        pasteboard.clearContents()
-                        pasteboard.setString(svgString, forType: .string)
-                        
-                        DispatchQueue.main.async {
-                            feedbackText = "Copied to clipboard!"
-                            isLoading = false
-                        }
-                    }
-                }
-                .padding(.bottom)
-                .disabled(userImage == nil)
+                ConvertButton(userImage: $userImage, isLoading: $isLoading, feedbackText: $feedbackText)
             }
 
             Text(feedbackText)
-                .padding()
+                .font(.title3)
+                .foregroundColor(Color.secondary)
         }
-        .padding()
-        .fileImporter(
-            isPresented: $showFileImporter,
-            allowedContentTypes: [.image],
-            allowsMultipleSelection: false
-        ) { result in
-            do {
-                guard let selectedFile: URL = try result.get().first else { return }
-                if let imageData = try? Data(contentsOf: selectedFile) {
-                    self.userImage = NSImage(data: imageData)
-                    self.feedbackText = ""
+        .padding(30)
+        .background(Color(NSColor.windowBackgroundColor))
+        .cornerRadius(20)
+        .shadow(radius: 10)
+        .onDrop(of: ["public.file-url"], isTargeted: $isDragOver) { providers in
+            handleDrop(providers: providers)
+        }
+    }
+
+    private func handleDrop(providers: [NSItemProvider]) -> Bool {
+        guard let item = providers.first else { return false }
+        item.loadItem(forTypeIdentifier: "public.file-url", options: nil) { (urlData, error) in
+            if let urlData = urlData as? Data, let url = URL(dataRepresentation: urlData, relativeTo: nil) {
+                if let imageData = try? Data(contentsOf: url) {
+                    DispatchQueue.main.async {
+                        self.userImage = NSImage(data: imageData)
+                        self.feedbackText = ""
+                    }
                 }
-            } catch {
-                // Handle error
-                print(error.localizedDescription)
             }
         }
+        return true
+    }
+}
+
+struct DropView: View {
+    @Binding var userImage: NSImage?
+    @Binding var isDragOver: Bool
+
+    var body: some View {
+        VStack {
+            Image(systemName: "photo.on.rectangle.angled")
+                .font(.system(size: 80))
+                .foregroundColor(isDragOver ? .accentColor : .secondary)
+            Text("Drop screenshot here")
+                .font(.title2)
+                .foregroundColor(isDragOver ? .accentColor : .secondary)
+        }
+        .frame(width: 300, height: 200)
+        .background(isDragOver ? Color.accentColor.opacity(0.2) : Color.secondary.opacity(0.1))
+        .cornerRadius(20)
+        .overlay(
+            RoundedRectangle(cornerRadius: 20)
+                .strokeBorder(style: StrokeStyle(lineWidth: 2, dash: [10]))
+                .foregroundColor(isDragOver ? .accentColor : .secondary)
+        )
+    }
+}
+
+struct ImageView: View {
+    @Binding var userImage: NSImage?
+
+    var body: some View {
+        Image(nsImage: userImage!)
+            .resizable()
+            .aspectRatio(contentMode: .fit)
+            .cornerRadius(10)
+            .shadow(radius: 5)
+            .padding()
+    }
+}
+
+struct ConvertButton: View {
+    @Binding var userImage: NSImage?
+    @Binding var isLoading: Bool
+    @Binding var feedbackText: String
+
+    private let imageAnalyzer = ImageAnalyzer()
+    private let svgGenerator = SVGGenerator()
+
+    var body: some View {
+        Button(action: {
+            guard let userImage = userImage else { return }
+            isLoading = true
+            feedbackText = ""
+
+            imageAnalyzer.analyze(image: userImage) { boxes, texts in
+                let svgString = svgGenerator.generate(
+                    width: userImage.size.width,
+                    height: userImage.size.height,
+                    boxes: boxes,
+                    texts: texts
+                )
+                let pasteboard = NSPasteboard.general
+                pasteboard.clearContents()
+                pasteboard.setString(svgString, forType: .string)
+                
+                DispatchQueue.main.async {
+                    feedbackText = "Copied to clipboard!"
+                    isLoading = false
+                }
+            }
+        }) {
+            Text("Convert to Figma")
+                .font(.title2)
+                .fontWeight(.bold)
+                .foregroundColor(.white)
+                .padding()
+                .frame(maxWidth: .infinity)
+                .background(Color.accentColor)
+                .cornerRadius(10)
+                .shadow(radius: 5)
+        }
+        .disabled(userImage == nil)
     }
 }
 
